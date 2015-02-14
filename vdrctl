@@ -24,7 +24,7 @@ my $VERSION     = '0.0.2';
 my $DEFAULTPRIORITY = 50;
 
 # Define configuration variables - assign default values
-my $argsdir = `pkg-config --variable argsdir vdr 2>/dev/null`; chomp($argsdir); # remove trailing slash
+my $argsdir = `pkg-config --variable argsdir vdr 2>/dev/null`; chomp($argsdir); # remove trailing line feed
 $argsdir    = '/etc/vdr/conf.d/' unless $argsdir;
 my $availdir= '../conf.avail';
 my $force   = 0;
@@ -43,6 +43,7 @@ GetOptions(
 );
 
 # Add trailing slash if not present
+# Double-Slash (in availdir) would prevent linkok from becoming ok
 $availdir .= '/' unless $availdir =~ m/\/$/;
 $argsdir  .= '/' unless $argsdir  =~ m/\/$/;
 
@@ -62,54 +63,53 @@ my $command = shift @ARGV;
 die("No command given\n") unless $command;
 
 # read argsdir and availdir
-my $files = &getFiles;
-sub getFiles {
-  my %files = ();
-  my $checkfile = sub {
-    my ($dir, $file, $type) = @_;
+my %files = ();
+sub checkFile {
+  my ($dir, $file, $type) = @_;
 
-    # Only files
-    return unless (-f $dir . $file);
+  # Only files
+  return unless (-f $dir . $file);
 
-    # Check filename with regex, extract components in one step
-    my (undef, $priority, $name) = ($file =~ m/^((\d\d)\-?)?(.+)\.conf$/);
-    return unless defined $name;
+  # Check filename with regex, extract components in one step
+  my (undef, $priority, $name) = ($file =~ m/^((\d\d)\-?)?(.+)\.conf$/);
+  return unless defined $name;
 
-    # Hardcoded opt-out
-    return if $name eq 'vdr';
+  # Hardcoded opt-out
+  return if $name eq 'vdr';
 
-    $files{$name} = { 'name' => $name } unless defined $files{$name};
-    my $f = $files{$name};
+  $files{$name} = { 'name' => $name } unless defined $files{$name};
+  # Just for short writing
+  my $f = $files{$name};
 
-    if (defined($f->{$type})) {
-      printf STDERR "Found multiple %s files %s, ignoring %s\n", $type, $name, $file;
-      return;
-    }
-
-    $f->{$type} = $file;
-    $f->{(($type eq 'available') ? 'def' : '') . 'priority'} = $priority;
-    if (($type ne 'available') and (-l $dir . $file)) {
-
-      $f->{'link'} = readlink($dir . $file);
-      if (defined($f->{'available'}) and ($f->{'link'} eq $availdir . $f->{'available'})) {
-        $f->{'linkok'} = 1;
-      }
-    }
-  };
-
-  opendir DIRPTR, $availabs;
-  while (my $file = readdir(DIRPTR)) {
-    &$checkfile($availabs, $file, 'available');
+  if (defined($f->{$type})) {
+    printf STDERR "Found multiple %s files %s, ignoring %s\n", $type, $name, $file;
+    return;
   }
-  closedir DIRPTR;
 
-  opendir DIRPTR, $argsdir;
-  while (my $file = readdir(DIRPTR)) {
-    &$checkfile($argsdir, $file, 'enabled');
+  $f->{$type} = $file;
+  $f->{(($type eq 'available') ? 'def' : '') . 'priority'} = $priority;
+  if (($type ne 'available') and (-l $dir . $file)) {
+
+    $f->{'link'} = readlink($dir . $file);
+    if (defined($f->{'available'}) and ($f->{'link'} eq $availdir . $f->{'available'})) {
+      $f->{'linkok'} = 1;
+    }
   }
-  closedir DIRPTR;
-  return \%files;
 }
+
+my $dirptr;
+
+opendir $dirptr, $availabs;
+while (my $file = readdir($dirptr)) {
+  &checkFile($availabs, $file, 'available');
+}
+closedir $dirptr;
+
+opendir $dirptr, $argsdir;
+while (my $file = readdir($dirptr)) {
+  &checkFile($argsdir, $file, 'enabled');
+}
+closedir $dirptr;
 
 # no native switch-case in perl
 if ($command eq 'list') {
@@ -123,7 +123,7 @@ if ($command eq 'list') {
 } elsif ($command eq 'edit') {
   &edit;
 } elsif ($command eq 'dump-files') {
-  print Dumper(&getFiles);
+  print Dumper(\%files);
 }
 
 sub list {
@@ -132,12 +132,12 @@ sub list {
   if ($enabled or $disabled) {
     # trimmed output
     print colored['bold'], "Enabled files:\n"  if $enabled and $disabled;
-    print sort map { $_->{'name'} . "\n" } grep {     defined $_->{'enabled'} } values %$files if $enabled;
+    print sort map { $_->{'name'} . "\n" } grep {     defined $_->{'enabled'} } values %files if $enabled;
     print colored['bold'], "Disabled files:\n" if $enabled and $disabled;
-    print sort map { $_->{'name'} . "\n" } grep { not defined $_->{'enabled'} } values %$files if $disabled;
+    print sort map { $_->{'name'} . "\n" } grep { not defined $_->{'enabled'} } values %files if $disabled;
   } else {
     # fancy output
-    foreach my $f (sort { $a->{'name'} cmp $b->{'name'} } values %$files) {
+    foreach my $f (sort { $a->{'name'} cmp $b->{'name'} } values %files) {
       printf "%-44s", $f->{'name'};
       if (defined($f->{'available'}) and defined($f->{'enabled'})) {
         print colored['bright_green bold'], "enabled";
@@ -164,11 +164,11 @@ sub status {
 
   while (my $name = shift @ARGV) { 
     printf $format, "Name:", sprintf(colored['bold'], $name);
-    if (not defined $files->{$name}) {
+    if (not defined $files{$name}) {
       print colored['bright_red bold'], "Configuration file not found\n\n";
       next;
     }
-    my $f = $files->{$name};
+    my $f = $files{$name};
     printf $format, "Available-File:",  $f->{'available'}   if defined $f->{'available'};
     printf $format, "Default-Prio:",    $f->{'defpriority'} if defined $f->{'defpriority'};
     printf $format, "Enabled-File:",    $f->{'enabled'}     if defined $f->{'enabled'};
@@ -181,11 +181,11 @@ sub status {
 
 sub enable {
   while (my $name = shift(@ARGV)) {
-    if (not defined $files->{$name}) {
+    if (not defined $files{$name}) {
       print colored['bright_red bold'], "Configuration file $name not found\n";
       next;
     }
-    my $f = $files->{$name};
+    my $f = $files{$name};
     if (not defined $f->{'available'}) {
       print colored['bright_red bold'], "Configuration file $name not available\n";
       next;
@@ -225,11 +225,11 @@ sub enable {
 
 sub disable {
   while (my $name = shift @ARGV) {
-    if (not defined $files->{$name}) {
+    if (not defined $files{$name}) {
       print colored['bright_red bold'], "Configuration file $name not found\n";
       next;
     }
-    my $f = $files->{$name};
+    my $f = $files{$name};
     my $myforce = $force;
     GetOptions('force|f' => \$myforce);
     if (not defined($f->{'enabled'})) {
@@ -245,17 +245,18 @@ sub disable {
 
 sub edit {
   my $editor = $ENV{'EDITOR'};
+  # from update-alternatives
   $editor = '/usr/bin/editor' if ((not $editor) and (-x '/usr/bin/editor'));
-  $editor = '/usr/bin/nano'   if ((not $editor) and (-x '/usr/bin/nano'));
-  $editor = '/usr/bin/vi'     if ((not $editor) and (-x '/usr/bin/vi'));
-  $editor = '/bin/vi'         if ((not $editor) and (-x '/bin/vi'));
+  # present on nearly all unix-based machines
+  $editor = 'vi'              if `which vi`;
   GetOptions('editor|e=s' => \$editor);
+  die("No editor found\n")    unless $editor;
   while (my $name = shift @ARGV)  {
-    if (not defined $files->{$name}) {
+    if (not defined $files{$name}) {
       print colored['bright_red bold'], "Configuration file $name not found\n";
       next;
     }
-    my $f = $files->{$name};
+    my $f = $files{$name};
     if (defined($f->{'enabled'})) {
       system($editor, $argsdir . $f->{'enabled'});
     } elsif (defined($f->{'available'})) {
