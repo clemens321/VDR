@@ -21,6 +21,8 @@ use Data::Dumper;
 my $PROGNAME    = 'vdrctl';
 my $VERSION     = '0.0.2';
 
+my $DEFAULTPRIORITY = 50;
+
 # Define configuration variables - assign default values
 my $argsdir = `pkg-config --variable argsdir vdr 2>/dev/null`; chomp($argsdir); # remove trailing slash
 $argsdir    = '/etc/vdr/conf.d/' unless $argsdir;
@@ -139,11 +141,13 @@ sub list {
       printf "%-44s", $f->{'name'};
       if (defined($f->{'available'}) and defined($f->{'enabled'})) {
         print colored['bright_green bold'], "enabled";
-        print " (" . $f->{'priority'} . ")" if defined $f->{'priority'};
+        print " (" . $f->{'priority'} . ")" if defined($f->{'priority'}) and ($f->{'priority'} != $DEFAULTPRIORITY);
         print " *" if not defined $f->{'linkok'};
         print "\n";
       } elsif (defined($f->{'enabled'})) {
-        print "foreign\n";
+        print "foreign";
+        print " (" . $f->{'priority'} . ")" if defined($f->{'priority'}) and ($f->{'priority'} != $DEFAULTPRIORITY);
+        print "\n";
       } elsif (defined($f->{'available'})) {
         print colored['bright_red bold'], "disabled\n";
       } else {
@@ -187,7 +191,7 @@ sub enable {
       next;
     }
 
-    my $priority = 50;
+    my $priority = $DEFAULTPRIORITY;
     my $myforce = $force;
     $priority = $f->{'defpriority'} if defined $f->{'defpriority'};
 
